@@ -1,36 +1,129 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# LEGO Plotter
 
-## Getting Started
+A web-based control interface for a LEGO-based plotter/drawing machine. This project provides both manual control and path drawing capabilities, with real-time feedback and safety features.
 
-First, run the development server:
+## Installation
 
+1. Clone the repository:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/CrispStrobe/lego-plotter.git
+cd lego-plotter
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Install dependencies:
+```bash
+npm install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+3. Start the development server:
+```bash
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The application will be available at `http://localhost:3000`
 
-## Learn More
+### Requirements
 
-To learn more about Next.js, take a look at the following resources:
+- Node.js 18.0 or higher
+- NPM 9.0 or higher
+- Modern web browser with WebSocket support
+- LEGO PoweredUP compatible hardware
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+lego-plotter/
+├── app/                    # Next.js app directory
+├── components/            # React components
+│   ├── CalibrationTool
+│   ├── CoordinateGrid     # Main drawing interface
+│   ├── ManualControl
+│   ├── MotorControl
+│   ├── MovementPreview
+│   ├── Notifications
+│   ├── PositionPresets
+│   ├── SafetyDiagnostics
+│   ├── SequenceManager
+│   ├── StatusMonitor
+│   └── VisualFeedback
+├── lib/                   # Core functionality
+│   ├── CommandQueue       # Command sequencing
+│   ├── ConnectionMonitor  # Hardware connection
+│   ├── MovementValidator  # Safety checks
+│   ├── PathPlanner        # Path optimization
+│   ├── plotter           # Hardware control
+│   ├── SafetyController  # Safety features
+│   └── types             # TypeScript types
+└── public/               # Static assets
+```
 
-## Deploy on Vercel
+## Features
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Drawing Interface
+- Interactive canvas for creating drawings
+- Real-time path preview
+- Support for continuous drawing
+- Path optimization
+- Preview animation before plotting
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Hardware Control
+- Direct plotter position control
+- Grid-based coordinate system
+- Real-time position feedback
+- Safety bounds checking
+- Error recovery
+
+### Safety Features
+- Movement validation
+- Connection monitoring
+- Emergency stop
+- Position limit enforcement
+- Error recovery procedures
+
+## Usage
+
+### Drawing Mode
+1. Select "Draw Mode"
+2. Click and drag on the canvas to create paths
+3. Release to complete a path segment
+4. Click "Plot Drawn Path" to execute
+5. Preview animation will play before plotting
+
+### Plot Mode
+1. Select "Plot Mode"
+2. Click any point on the grid to move the plotter
+3. Wait for movement to complete
+4. Current position is highlighted
+5. Grid provides coordinate reference
+
+## Development
+
+### Available Scripts
+
+```bash
+# Development server
+npm run dev
+
+# Production build
+npm run build
+
+# Start production server
+npm run start
+
+# Lint code
+npm run lint
+```
+
+### Key Dependencies
+
+- Next.js 15.0
+- React 19.0
+- WebSocket (ws) for hardware communication
+- Tailwind CSS for styling
+- PoweredUP library for LEGO hardware control
+
+## Acknowledgments
+
+- LEGO PoweredUP SDK
+- Next.js team
+- React community
