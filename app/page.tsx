@@ -62,7 +62,7 @@ interface PlotterState {
   isMoving: boolean;
 }
 
-export const convertCalibrationFormat = (settings: CalibrationSettings): SimpleCalibration => {
+const convertCalibrationFormat = (settings: CalibrationSettings): SimpleCalibration => {
   return {
     x: settings.degreesPerMM.X,
     y: settings.degreesPerMM.Y

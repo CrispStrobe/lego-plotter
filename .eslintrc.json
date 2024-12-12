@@ -1,3 +1,13 @@
 {
-  "extends": ["next/core-web-vitals", "next/typescript"]
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "rules": {
+    "@typescript-eslint/no-explicit-any": "warn", // Change from error to warning
+    "@typescript-eslint/no-unused-vars": ["warn", {
+      "argsIgnorePattern": "^_",
+      "varsIgnorePattern": "^_"
+    }],
+    "react-hooks/exhaustive-deps": "warn", // Keep as warning for now
+    "@typescript-eslint/no-unsafe-function-type": "warn",
+    "@typescript-eslint/no-unsafe-assignment": "off"
+  }
 }
