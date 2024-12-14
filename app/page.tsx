@@ -260,29 +260,39 @@ export default function TestInterface() {
     if (!plotterRef.current || !hub) return;
   
     try {
-      // Wait for motors to be detected
-      await new Promise<void>((resolve, reject) => {
+      // More robust motor detection with specific motor check
+      await new Promise<void>((resolve) => {
         let attempts = 0;
+        const maxAttempts = 10;
         const checkMotors = setInterval(() => {
-          const motorA = plotterRef.current?.getDeviceAtPort('A');
-          const motorB = plotterRef.current?.getDeviceAtPort('B');
-          
-          if (motorA && motorB) {
+          const missingMotors: string[] = []; // Explicitly typed as an array of strings
+          const motors = ['A', 'B', 'C'];
+  
+          motors.forEach(port => {
+            const motor = plotterRef.current?.getDeviceAtPort(port);
+            if (!motor) missingMotors.push(port);
+          });
+  
+          if (missingMotors.length === 0) {
             clearInterval(checkMotors);
             resolve();
-          } else if (attempts++ > 10) {  // Timeout after 10 attempts
+          } else if (attempts++ >= maxAttempts) {
             clearInterval(checkMotors);
-            reject(new Error('Motors not detected after multiple attempts'));
+            // Notify the user which motors are missing
+            addNotification(
+              `Motors not detected on ports: ${missingMotors.join(', ')}. Check connections.`,
+              'info'
+            );
+            resolve(); // Allow operation to continue
           }
         }, 500);
       });
   
-      addNotification('Motors initialized successfully', 'success');
+      addNotification('Motors initialized', 'success');
     } catch (error) {
       addNotification(`Motor initialization failed: ${error}`, 'error');
-      throw error;
     }
-  };
+  };  
   
   // Add to useEffect after connection
   useEffect(() => {
@@ -304,26 +314,37 @@ export default function TestInterface() {
   const [safetyLimits, setSafetyLimits] = useState<Record<string, PortLimits>>(DEFAULT_LIMITS);
 
   const handleCalibration = (settings: CalibrationSettings) => {
+    // Update calibration state
     setCalibration({
       ...settings,
-      x: settings.degreesPerMM.X,  // Add simple format
-      y: settings.degreesPerMM.Y   // Add simple format
+      x: settings.degreesPerMM.X,
+      y: settings.degreesPerMM.Y
     });
     
-    // Now this will work because calibration has both formats
+    // Update all systems that depend on calibration
     if (movementValidator.current) {
       movementValidator.current = new MovementValidator(
         MOVEMENT_BOUNDS,
-        convertCalibrationFormat(calibration),
+        convertCalibrationFormat(settings), // Use new settings, not current state
         simulationMode
+      );
+    }
+    
+    if (pathExecutor.current) {
+      pathExecutor.current = new PathExecutor(
+        plotterRef.current,
+        settings,
+        simulationMode,
+        50,
+        30
       );
     }
   };
   
   // Sequence handling functions
   const handleLoadSequence = async (sequence: PlotterSequence) => {
-    if (isMoving) {
-      addNotification('Cannot execute sequence: Already moving', 'error');
+    if (isMoving || !plotterRef.current) {
+      addNotification('Cannot execute sequence: System not ready', 'error');
       return;
     }
   
@@ -336,62 +357,47 @@ export default function TestInterface() {
       setIsMoving(true);
       setCurrentSequence(sequence);
       setExecutionProgress(0);
+      setPreviewSequence(sequence); // Set preview sequence for visualization
   
-      const totalMoves = sequence.moves.length;
-      
-      // For simulation mode, we don't need hardware connection
-      if (!simulationMode && !plotterRef.current?.isConnected()) {
-        throw new Error('Plotter not connected');
-      }
-  
-      for (let i = 0; i < totalMoves; i++) {
-        const move = sequence.moves[i];
-  
-        if (simulationMode) {
-          // Simulate movement with visual feedback
-          await new Promise<void>((resolve) => {
-            setTimeout(() => {
-              setCurrentX(move.x);
-              setCurrentY(move.y);
-              if (move.z !== undefined) {
-                setPenState(move.z === 0 ? 'up' : 'down');
-              }
-              resolve();
-            }, 200); // Slightly longer delay for better visualization
-          });
-        } else {
-          // Real hardware execution
-          if (movementValidator.current) {
-            const validation = movementValidator.current.validatePath(
-              currentX,
-              currentY,
-              move.x,
-              move.y
-            );
-  
-            if (!validation.valid) {
-              throw new Error(`Invalid movement at step ${i + 1}: ${validation.reason}`);
-            }
+      if (simulationMode) {
+        // Simulation mode execution
+        for (let i = 0; i < sequence.moves.length; i++) {
+          const move = sequence.moves[i];
+          setCurrentX(move.x);
+          setCurrentY(move.y);
+          if (move.z !== undefined) {
+            setPenState(move.z === 0 ? 'up' : 'down');
           }
-  
+          setExecutionProgress(((i + 1) / sequence.moves.length) * 100);
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      } else {
+        // Hardware mode execution
+        for (let i = 0; i < sequence.moves.length; i++) {
+          const move = sequence.moves[i];
+          
           await executeCommand(async () => {
-            if (move.z !== undefined) {
-              await setPenPosition(move.z);
+            try {
+              // Handle pen movement if needed
+              if (move.z !== undefined) {
+                const position = move.z === 0 ? PEN_POSITIONS.UP : PEN_POSITIONS.DOWN;
+                await setPenPosition(position);
+              }
+  
+              // Move to position if changed
+              if (move.x !== currentX || move.y !== currentY) {
+                await moveToPosition(move.x, move.y);
+              }
+            } catch (error) {
+              throw new Error(`Move failed at step ${i + 1}: ${error}`);
             }
-            await moveToPosition(move.x, move.y);
           });
+  
+          setExecutionProgress(((i + 1) / sequence.moves.length) * 100);
         }
   
-        setExecutionProgress(((i + 1) / totalMoves) * 100);
-      }
-  
-      // Ensure pen is up at the end
-      if (simulationMode) {
-        setPenState('up');
-      } else {
-        await executeCommand(async () => {
-          await setPenPosition(PEN_POSITIONS.UP);
-        });
+        // Ensure pen is up at end
+        await setPenPosition(PEN_POSITIONS.UP);
       }
   
       addNotification(`Sequence "${sequence.name}" completed successfully`, 'success');
@@ -405,6 +411,7 @@ export default function TestInterface() {
       setIsMoving(false);
       setCurrentSequence(null);
       setExecutionProgress(0);
+      setPreviewSequence(null);
     }
   };
 
@@ -446,142 +453,122 @@ export default function TestInterface() {
     await moveToPosition(x, y);
   };
 
-  const plotterRef = useRef<PlotterControl | null>(null)
-  const commandQueueRef = useRef<any>(null);
+  const plotterRef = useRef<PlotterControl>(new PlotterControl(simulationMode));
+  const commandQueueRef = useRef<CommandQueue>(plotterRef.current.commandQueue);
 
+  // Single unified initialization effect
   useEffect(() => {
     let initializeTimeout: ReturnType<typeof setTimeout>;
-  
-    const initializePlotter = () => {
+    let isInitializing = false;
+
+    const initializePlotter = async () => {
+      if (isInitializing) return;
+      isInitializing = true;
+
       try {
-        if (typeof window !== 'undefined' && window.poweredup?.default) {
-          plotterRef.current = new PlotterControl(simulationMode);  // No arguments
-          
-          // If we need simulation mode, we should handle it differently
-          // Maybe through a separate method or state in PlotterControl
-          if (simulationMode) {
-            setStatus('Simulation Mode');
-            addNotification('Running in simulation mode', 'info');
-          }
-        } else {
+        // Wait for PoweredUP to be available in non-simulation mode
+        if (!simulationMode && typeof window !== 'undefined' && !window.poweredup?.default) {
           initializeTimeout = setTimeout(initializePlotter, 100);
+          return;
         }
+
+        const plotter = plotterRef.current;
+
+        // Connect in hardware mode
+        if (!simulationMode) {
+          await plotter.connect();
+          setHub(plotter.hub);
+          setStatus('Connected');
+
+          // Initialize safety systems
+          safetyController.current = new SafetyController(
+            plotter.hub,
+            (message: string, type: NotificationType) => addNotification(message, type)
+          );
+          
+          connectionMonitor.current = new ConnectionMonitor(
+            plotter.hub,
+            (message: string) => addNotification(message, 'info'),
+            handleDisconnect
+          );
+
+          // Start monitoring
+          safetyController.current.startMonitoring();
+          connectionMonitor.current.startMonitoring();
+        } else {
+          setStatus('Simulation Mode');
+          addNotification('Running in simulation mode', 'info');
+        }
+
+        // Initialize common systems
+        movementValidator.current = new MovementValidator(
+          MOVEMENT_BOUNDS,
+          calibration,
+          simulationMode
+        );
+
+        pathExecutor.current = new PathExecutor(
+          plotter,
+          calibration,
+          simulationMode,
+          50, // moveSpeed
+          30  // drawSpeed
+        );
+
+        // Initialize position if in hardware mode
+        if (!simulationMode && plotter.isConnected()) {
+          // Verify all motors are attached
+          const motors = ['A', 'B', 'C'];
+          const allMotorsReady = motors.every(port => plotter.motors[port]);
+          
+          if (!allMotorsReady) {
+            throw new Error('Not all motors are attached');
+          }
+
+          // Initialize position
+          await setPenPosition(PEN_POSITIONS.UP);
+          await moveToPosition(HOME_POSITION.x, HOME_POSITION.y);
+          addNotification('Initialized to home position', 'success');
+        }
+
       } catch (error) {
-        addNotification(`Plotter initialization failed: ${error}`, 'error');
+        console.error('Initialization error:', error);
+        addNotification(`Initialization failed: ${error}`, 'error');
+        
+        if (!simulationMode) {
+          // Clean up on failure
+          await handleDisconnect();
+        }
+      } finally {
+        isInitializing = false;
       }
     };
-  
+
+    // Start initialization
     initializePlotter();
-  
+
+    // Cleanup function
     return () => {
       if (initializeTimeout) {
         clearTimeout(initializeTimeout);
       }
+
+      if (!simulationMode) {
+        safetyController.current?.stopMonitoring();
+        connectionMonitor.current?.stopMonitoring();
+      }
+
       plotterRef.current?.disconnect();
+      
+      // Clear all refs
+      safetyController.current = null;
+      movementValidator.current = null;
+      connectionMonitor.current = null;
+      pathExecutor.current = null;
     };
-  }, [simulationMode]);
+  }, [simulationMode, calibration]); // Only re-run on mode or calibration changes
 
-  // Plotter setup
-  useEffect(() => {
-    const setupPlotter = async () => {
-      try {
-        const control = new PlotterControl()
-        await control.connect()
-        setPlotterControl(control)
-        setPlotterState(prev => ({ ...prev, isConnected: true }))
-
-        // Subscribe to position updates
-        control.onPositionUpdate((position: Position) => {
-          setCurrentPosition(position)
-          setPlotterState(prev => ({ ...prev, position }))
-        })
-
-      } catch (error) {
-        console.error('Failed to connect to plotter:', error)
-      }
-    }
-
-    setupPlotter()
-
-    return () => {
-      plotterControl?.disconnect()
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!plotterRef.current?.hub || !addNotification) return;
-  
-    try {
-      // Initialize safety systems - only in hardware mode
-      if (!simulationMode) {
-        safetyController.current = new SafetyController(
-          plotterRef.current.hub, 
-          (message: string, type: NotificationType) => addNotification(message, type)
-        );
-        
-        connectionMonitor.current = new ConnectionMonitor(
-          plotterRef.current.hub,
-          (message: string) => addNotification(message, 'info'),
-          handleDisconnect
-        );
-      }
-  
-      // Always initialize these
-      movementValidator.current = new MovementValidator(
-        MOVEMENT_BOUNDS, 
-        calibration,
-        simulationMode // Pass simulation mode flag
-      );
-  
-      pathExecutor.current = new PathExecutor(
-        plotterRef.current!, // Plotter instance
-        calibration,        // Pass full CalibrationSettings
-        simulationMode,     // Simulation mode
-        50,                 // moveSpeed (optional)
-        30                  // drawSpeed (optional)
-      );
-  
-      // Start monitoring only in hardware mode
-      if (!simulationMode) {
-        safetyController.current?.startMonitoring();
-        connectionMonitor.current?.startMonitoring();
-      }
-  
-      return () => {
-        if (!simulationMode) {
-          safetyController.current?.stopMonitoring();
-          connectionMonitor.current?.stopMonitoring();
-        }
-      };
-    } catch (error) {
-      addNotification(`Failed to initialize systems: ${error}`, 'error');
-    }
-  }, [plotterRef.current, calibration, simulationMode]);
-  //}, [plotterRef.current?.hub, calibration, addNotification]);  
-
-  // initial position setup effect:
-  useEffect(() => {
-    if (!hub || !plotterRef.current?.isConnected()) return;
-    
-    const initialize = async () => {
-      try {
-        await initializePosition();
-      } catch (error) {
-        addNotification(`Initialization failed: ${error}`, 'error');
-      }
-    };
-  
-    initialize();
-  }, [hub]);
-
-  useEffect(() => {
-    if (!plotterRef.current) {
-      plotterRef.current = new PlotterControl();
-      commandQueueRef.current = plotterRef.current.commandQueue;
-    }
-  }, []);
-
-  // Disconnect handler that properly cleans up safety systems
+  // Handle disconnection
   const handleDisconnect = async () => {
     try {
       // Stop all safety monitoring
@@ -603,35 +590,25 @@ export default function TestInterface() {
       
       addNotification('Hub disconnected', 'info');
     } catch (error) {
+      console.error('Disconnect error:', error);
       addNotification(`Disconnect error: ${error}`, 'error');
     }
   };
-  
-  
+
+  // Helper for position initialization
   const initializePosition = async () => {
-    if (!hub) return;
-    
-    // Verify all motors are attached
-    const motors = ['A', 'B', 'C'];
-    const allMotorsReady = motors.every(port => plotterRef.current?.motors[port]);
-    
-    if (!allMotorsReady) {
-      throw new Error('Not all motors are attached');
-    }
+    if (!plotterRef.current || !hub) return;
     
     try {
-      // First raise pen
       await setPenPosition(PEN_POSITIONS.UP);
-      // Move to home position
       await moveToPosition(HOME_POSITION.x, HOME_POSITION.y);
-      
       addNotification('Initialized to home position', 'success');
     } catch (error) {
-      addNotification(`Initialization failed: ${error}`, 'error');
-      // Attempt emergency stop on initialization failure
+      console.error('Position initialization error:', error);
+      addNotification(`Position initialization failed: ${error}`, 'error');
       await emergencyStop();
     }
-  }
+  };
 
   // Disconnect function that ensures proper cleanup
   const disconnect = async () => {
@@ -659,14 +636,22 @@ export default function TestInterface() {
           setStatus('Scanning...');
           await plotterRef.current.connect();
           setHub(plotterRef.current.hub);
+          
+          // Instead of calling initializePlotter, reinitialize directly:
+          await initializePosition();
+          if (movementValidator.current) {
+            movementValidator.current = new MovementValidator(
+              MOVEMENT_BOUNDS,
+              calibration,
+              simulationMode
+            );
+          }
         } else {
-          // In simulation, just set hub directly
           setHub(plotterRef.current.hub);
         }
         setStatus(simulationMode ? 'Simulation Active' : 'Connected');
       } else {
-        await plotterRef.current.disconnect();
-        await handleDisconnect();
+        await disconnect();
       }
     } catch (error) {
       addNotification(`Connection error: ${error}`, 'error');
@@ -676,12 +661,10 @@ export default function TestInterface() {
     }
   };
 
-  
-
   // Command execution with safety checks
   const executeCommand = async (command: () => Promise<void>): Promise<void> => {
-    if (!connectionMonitor.current?.isConnectionStable()) {
-      throw new Error('Connection unstable');
+    if (!plotterRef.current) {
+      throw new Error('Plotter not initialized');
     }
   
     return commandQueue.current.add(() => {
@@ -705,23 +688,24 @@ export default function TestInterface() {
   const controlMotorByTime = async (port: string, direction: 'forward' | 'backward') => {
     if (!plotterRef.current) return;
   
-    try {
-      await plotterRef.current.runMotor(
-        port, 
-        direction, 
-        motorStates[port].speed
-      );
-      
-      // Wait for specified time
-      await new Promise(resolve => setTimeout(resolve, motorStates[port].time));
-      
-      // Stop motor
-      await plotterRef.current.stopMotor(port);
-      updateMotorState(port, { isMoving: false });
-    } catch (error) {
-      addNotification(`Timed motor control failed: ${error}`, 'error');
-      await emergencyStop();
-    }
+    await executeCommand(async () => {
+      try {
+        await plotterRef.current!.runMotor(
+          port,
+          direction,
+          motorStates[port].speed
+        );
+        
+        await new Promise(resolve => setTimeout(resolve, motorStates[port].time));
+        
+        await plotterRef.current!.stopMotor(port);
+        updateMotorState(port, { isMoving: false });
+      } catch (error) {
+        addNotification(`Timed motor control failed: ${error}`, 'error');
+        await emergencyStop();
+        throw error;
+      }
+    });
   };
 
   useEffect(() => {
@@ -752,50 +736,61 @@ export default function TestInterface() {
       return;
     }
   
-    try {
-      setIsMoving(true);
-      const deltaX = x - currentX;
-      const deltaY = y - currentY;
-      //const degreesX = deltaX * calibration.x;
-      //const degreesY = deltaY * calibration.y;
-      const degreesX = deltaX * calibration.degreesPerMM.X;  // or calibration.x if using simple format
-      const degreesY = deltaY * calibration.degreesPerMM.Y;  // or calibration.y if using simple format
+    await executeCommand(async () => {
+      try {
+        setIsMoving(true);
+        const deltaX = x - currentX;
+        const deltaY = y - currentY;
+        const degreesX = deltaX * calibration.degreesPerMM.X;
+        const degreesY = deltaY * calibration.degreesPerMM.Y;
   
-      // Update target positions
-      updateMotorState('B', { targetPosition: degreesX, isMoving: true });
-      updateMotorState('A', { targetPosition: degreesY, isMoving: true });
+        // Update target positions
+        updateMotorState('B', { targetPosition: degreesX, isMoving: true });
+        updateMotorState('A', { targetPosition: degreesY, isMoving: true });
   
-      // Set acceleration/deceleration
-      await plotterRef.current.setAccelerationTime('B', acceleration.B);
-      await plotterRef.current.setAccelerationTime('A', acceleration.A);
-      await plotterRef.current.setDecelerationTime('B', deceleration.B);
-      await plotterRef.current.setDecelerationTime('A', deceleration.A);
+        // Execute movement
+        await Promise.all([
+          plotterRef.current!.runMotor('B', degreesX >= 0 ? 'forward' : 'backward', motorStates.B.speed),
+          plotterRef.current!.runMotor('A', degreesY >= 0 ? 'forward' : 'backward', motorStates.A.speed)
+        ]);
   
-      // Move both motors
-      await Promise.all([
-        plotterRef.current.rotateByDegrees('B', degreesX, motorStates.B.speed),
-        plotterRef.current.rotateByDegrees('A', degreesY, motorStates.A.speed)
-      ]);
+        // Wait for movement using time approximation
+        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+        const moveTime = (distance / motorStates.B.speed) * 1000; // rough approximation
+        await new Promise(resolve => setTimeout(resolve, moveTime));
   
-      setCurrentX(x);
-      setCurrentY(y);
-    } catch (error) {
-      addNotification(`Movement failed: ${error}`, 'error');
-      await emergencyStop();
-    } finally {
-      setIsMoving(false);
-      updateMotorState('B', { targetPosition: null, isMoving: false });
-      updateMotorState('A', { targetPosition: null, isMoving: false });
-    }
+        // Stop motors
+        await Promise.all([
+          plotterRef.current!.stopMotor('B'),
+          plotterRef.current!.stopMotor('A')
+        ]);
+  
+        setCurrentX(x);
+        setCurrentY(y);
+      } catch (error) {
+        addNotification(`Movement failed: ${error}`, 'error');
+        await emergencyStop();
+        throw error;
+      } finally {
+        setIsMoving(false);
+        updateMotorState('B', { targetPosition: null, isMoving: false });
+        updateMotorState('A', { targetPosition: null, isMoving: false });
+      }
+    });
   };
 
   const setPenPosition = async (position: number) => {
     if (!plotterRef.current) return;
-  
+    
     try {
-      // Clamp position between -45 and 0 degrees
-      const clampedPosition = Math.max(-45, Math.min(0, position));
-      await plotterRef.current.rotateByDegrees('C', clampedPosition, motorStates.C.speed);
+      // Always use timed movement for pen
+      const direction = position === PEN_POSITIONS.UP ? 'forward' : 'backward';
+      await plotterRef.current.runMotor('C', direction, 50);
+      await new Promise(resolve => setTimeout(resolve, 400));
+      await plotterRef.current.stopMotor('C');
+      
+      // Update state
+      updateMotorState('C', { currentPosition: position });
     } catch (error) {
       addNotification(`Pen movement failed: ${error}`, 'error');
     }
@@ -803,12 +798,35 @@ export default function TestInterface() {
 
   const togglePen = async () => {
     if (!plotterRef.current) return;
+    
     try {
-      // Use PEN_POSITIONS constants and current position to determine next position
-      const newPosition = motorStates.C.currentPosition === PEN_POSITIONS.DOWN ? 
-        PEN_POSITIONS.UP : PEN_POSITIONS.DOWN;
-      await plotterRef.current.rotateByDegrees('C', newPosition, 30); // Lower speed for pen movement
-      updateMotorState('C', { currentPosition: newPosition });
+      // Use executeCommand for safety
+      await executeCommand(async () => {
+        const nextState = motorStates.C.currentPosition === PEN_POSITIONS.DOWN ? 'up' : 'down';
+        const direction = nextState === 'up' ? 'forward' : 'backward';
+        
+        try {
+          // Use timed movement for reliability
+          await plotterRef.current!.runMotor('C', direction, 50);
+          await new Promise(resolve => setTimeout(resolve, 400));
+          await plotterRef.current!.stopMotor('C');
+          
+          // Update state after successful movement
+          updateMotorState('C', {
+            currentPosition: nextState === 'up' ? PEN_POSITIONS.UP : PEN_POSITIONS.DOWN,
+            isMoving: false,
+            targetPosition: null
+          });
+        } catch (error) {
+          // Clean up motor state on error
+          await plotterRef.current!.stopMotor('C');
+          updateMotorState('C', {
+            isMoving: false,
+            targetPosition: null
+          });
+          throw error; // Rethrow for executeCommand to handle
+        }
+      });
     } catch (error) {
       addNotification(`Pen movement failed: ${error}`, 'error');
     }

@@ -121,9 +121,18 @@ export class PlotterControl {
     if (!motor) {
       throw new Error(`Motor ${port} not found or not properly initialized`);
     }
-
+  
     try {
-      await motor.rotateByDegrees(degrees, speed);
+      // Convert negative degrees to backward direction
+      const direction = degrees >= 0 ? 'forward' : 'backward';
+      const absDegrees = Math.abs(degrees);
+      
+      // Convert degrees to time (rough approximation)
+      const time = (absDegrees / speed) * 1000; // milliseconds
+      
+      await motor.setPower(direction === 'forward' ? speed : -speed);
+      await new Promise(resolve => setTimeout(resolve, time));
+      await motor.brake();
     } catch (error) {
       console.error(`Error rotating motor ${port}:`, error);
       throw error;

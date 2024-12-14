@@ -22,18 +22,37 @@ export class PathPlanner {
     paths: PreviewPath[],
     name: string = 'Manual Path'
   ): PlotterSequence {
-    const moves: PlotterMove[] = paths.map(path => ({
-      type: path.type,
-      x: path.endX,
-      y: path.endY,
-      z: path.type === 'move' ? 0 : -45
-    }))
-
+    // Convert paths to plotter moves with proper pen control
+    const moves: PlotterMove[] = [];
+    
+    paths.forEach((path, index) => {
+      // If this is a new path not connected to previous, add pen up move
+      if (index > 0) {
+        const prevPath = paths[index - 1];
+        if (path.startX !== prevPath.endX || path.startY !== prevPath.endY) {
+          moves.push({
+            type: 'move',
+            x: path.startX,
+            y: path.startY,
+            z: 0  // Pen up
+          });
+        }
+      }
+  
+      // the actual drawing move
+      moves.push({
+        type: path.type,
+        x: path.endX,
+        y: path.endY,
+        z: path.type === 'draw' ? -45 : 0
+      });
+    });
+  
     return {
       name,
-      moves: this.optimizePath(moves),
+      moves: PathProcessor.optimizePlotterMoves(moves),
       boundingBox: PathProcessor.calculateBoundingBox(moves)
-    }
+    };
   }
 
   static parseSVGPath(svgPath: string, scale: number = 1): PlotterMove[] {

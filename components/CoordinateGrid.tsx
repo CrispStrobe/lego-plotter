@@ -263,96 +263,200 @@ export function CoordinateGrid({
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
-
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    // Draw grid
-    ctx.save();
-    ctx.strokeStyle = '#ddd';
-    ctx.lineWidth = 0.5;
-
-    // Draw grid lines
-    for (let x = 0; x <= maxX * 2; x += 40) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, canvas.height);
-      ctx.stroke();
-    }
-
-    for (let y = 0; y <= maxY * 2; y += 40) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(canvas.width, y);
-      ctx.stroke();
-    }
-    
-    ctx.restore();
-    
-    // Apply scaling
-    ctx.save();
-    ctx.scale(2, 2);
-
-    // Draw paths
-    const drawPaths = (paths: PreviewPath[], style: { color: string, width: number }) => {
-      paths.forEach(path => {
-        ctx.beginPath();
-        ctx.moveTo(path.startX, path.startY);
-        ctx.strokeStyle = style.color;
-        ctx.lineWidth = style.width;
-        ctx.lineTo(path.endX, path.endY);
-        ctx.stroke();
-      });
+  
+    const GRID_SPACING = 40;
+    const POSITION_RADIUS = 4;
+    const PATH_WIDTH = 2;
+  
+    const colors = {
+      grid: '#ddd',
+      completedPath: 'rgba(220, 0, 0, 0.9)',
+      currentPath: 'rgba(220, 0, 0, 0.6)',
+      previewPath: 'rgba(0, 100, 255, 0.8)',
+      plotPath: 'rgba(220, 0, 0, 0.9)',
+      position: {
+        preview: 'blue',
+        plot: 'red'
+      }
     };
-
-    // Draw current and completed paths
-    if (!gridState.isPlotting) {
-      drawPaths(allPaths, { color: 'rgba(220, 0, 0, 0.9)', width: 2 });
-      drawPaths(currentPath, { color: 'rgba(220, 0, 0, 0.6)', width: 2 });
-    }
-
-    // Draw preview/plotting animation
-    if (gridState.isPlotting || gridState.isPreviewMode) {
-      const sequence = plotterSequenceRef.current;
-      let segmentFound = false;
-      
-      sequence.forEach((segment, index) => {
-        if (segmentFound) return;
-        
+  
+    // Clear canvas with white background
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+    // Draw grid
+    const drawGrid = () => {
+      ctx.save();
+      ctx.strokeStyle = colors.grid;
+      ctx.lineWidth = 0.5;
+  
+      // Vertical lines
+      for (let x = 0; x <= maxX * 2; x += GRID_SPACING) {
         ctx.beginPath();
-        ctx.moveTo(segment.startX, segment.startY);
-        ctx.strokeStyle = gridState.isPreviewMode ? 
-          'rgba(0, 100, 255, 0.8)' : 
-          'rgba(220, 0, 0, 0.9)';
-        ctx.lineWidth = 2;
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+  
+      // Horizontal lines
+      for (let y = 0; y <= maxY * 2; y += GRID_SPACING) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+      }
+  
+      // Add axis labels every 40mm
+      ctx.fillStyle = '#666';
+      ctx.font = '10px Arial';
+      ctx.textAlign = 'center';
+      
+      for (let x = 0; x <= maxX * 2; x += GRID_SPACING) {
+        ctx.fillText(`${x/2}`, x, canvas.height - 5);
+      }
+      for (let y = 0; y <= maxY * 2; y += GRID_SPACING) {
+        ctx.fillText(`${y/2}`, 10, y + 3);
+      }
+      
+      ctx.restore();
+    };
+  
+    // Draw paths helper function with anti-aliasing
+    const drawPaths = (paths: PreviewPath[], style: { color: string, width: number }) => {
+      ctx.beginPath();
+      ctx.strokeStyle = style.color;
+      ctx.lineWidth = style.width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+  
+      paths.forEach(path => {
+        ctx.moveTo(path.startX, path.startY);
+        ctx.lineTo(path.endX, path.endY);
+      });
+      
+      ctx.stroke();
+    };
+  
+    // Draw preview/plotting animation
+    const drawPreview = () => {
+      if (previewSequence && executionProgress > 0) {
+        const sequence = previewSequence.moves;
+        const currentMoveIndex = Math.floor((sequence.length * executionProgress) / 100);
+    
+        // Draw paths up to current position
+        ctx.beginPath();
+        ctx.strokeStyle = colors.plotPath;
+        ctx.lineWidth = PATH_WIDTH;
+    
+        for (let i = 0; i < currentMoveIndex; i++) {
+          const move = sequence[i];
+          if (i === 0) {
+            ctx.moveTo(move.x, move.y);
+          } else {
+            ctx.lineTo(move.x, move.y);
+          }
+        }
+        ctx.stroke();
+      }
+    
+      // Handle regular preview animation
+      else if (gridState.isPlotting && plotterSequenceRef.current.length > 0) {
+        const sequence = plotterSequenceRef.current;
+        const currentSegmentIndex = Math.floor(sequence.length * (gridState.plotProgress / 100));
         
-        if (index === Math.floor(sequence.length * (gridState.plotProgress / 100))) {
-          ctx.lineTo(currentPosition.x, currentPosition.y);
-          segmentFound = true;
-        } else {
+        // Draw completed segments
+        ctx.beginPath();
+        ctx.strokeStyle = colors.previewPath;
+        ctx.lineWidth = PATH_WIDTH;
+        
+        for (let i = 0; i < currentSegmentIndex; i++) {
+          const segment = sequence[i];
+          if (i === 0) {
+            ctx.moveTo(segment.startX, segment.startY);
+          }
           ctx.lineTo(segment.endX, segment.endY);
         }
-        
         ctx.stroke();
-      });
+    
+        // Draw current segment if in progress
+        if (currentSegmentIndex < sequence.length) {
+          const currentSegment = sequence[currentSegmentIndex];
+          ctx.beginPath();
+          ctx.moveTo(currentSegment.startX, currentSegment.startY);
+          ctx.lineTo(currentPosition.x, currentPosition.y);
+          ctx.stroke();
+        }
+      }
+    };
+  
+    // Draw position indicator
+    const drawPosition = () => {
+      // Always draw position indicator when in plot mode or during execution
+      if ((mode === 'plot' || executionProgress > 0) && !gridState.isDrawing) {
+        ctx.fillStyle = executionProgress > 0 ? colors.position.plot : colors.position.preview;
+        ctx.beginPath();
+        ctx.arc(currentX, currentY, POSITION_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+    
+        // Add crosshair
+        ctx.beginPath();
+        ctx.strokeStyle = ctx.fillStyle;
+        ctx.lineWidth = 1;
+        ctx.moveTo(currentX - POSITION_RADIUS * 2, currentY);
+        ctx.lineTo(currentX + POSITION_RADIUS * 2, currentY);
+        ctx.moveTo(currentX, currentY - POSITION_RADIUS * 2);
+        ctx.lineTo(currentX, currentY + POSITION_RADIUS * 2);
+        ctx.stroke();
+    
+        // Show coordinates
+        ctx.fillStyle = '#333';
+        ctx.font = '12px Arial';
+        ctx.fillText(
+          `(${currentX.toFixed(1)}, ${currentY.toFixed(1)})`,
+          currentX + 10,
+          currentY - 10
+        );
+      }
+    };
+  
+    try {
+      // Main drawing sequence
+      drawGrid();
+  
+      // Apply scaling for path drawing
+      ctx.save();
+      ctx.scale(2, 2);
+  
+      // Draw paths
+      if (!gridState.isPlotting) {
+        if (allPaths.length) {
+          drawPaths(allPaths, { color: colors.completedPath, width: PATH_WIDTH });
+        }
+        if (currentPath.length) {
+          drawPaths(currentPath, { color: colors.currentPath, width: PATH_WIDTH });
+        }
+      }
+  
+      drawPreview();
+      drawPosition();
+  
+      ctx.restore();
+    } catch (error) {
+      console.error('Canvas drawing error:', error);
     }
-
-    // Draw current position
-    if (mode === 'plot' || gridState.isPlotting) {
-      const posX = currentPosition.x;
-      const posY = currentPosition.y;
-      
-      // Position indicator
-      ctx.fillStyle = gridState.isPreviewMode ? 'blue' : 'red';
-      ctx.beginPath();
-      ctx.arc(posX, posY, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.restore();
   }, [
-    maxX, maxY, mode, currentPosition, 
-    gridState, allPaths, currentPath
+    maxX,
+    maxY,
+    mode,
+    currentPosition,
+    currentX,
+    currentY,
+    gridState,
+    allPaths,
+    currentPath,
+    executionProgress,
+    previewSequence,
+    plotterSequenceRef.current
   ]);
 
   // Update canvas
@@ -389,42 +493,55 @@ export function CoordinateGrid({
   // Plot handler
   const handlePlot = useCallback(() => {
     if (isCleaningUp.current || gridState.isPlotting || allPaths.length === 0) return;
-
-    const plotterSequence: PlotterSequence = {
-      name: 'Manual Drawing',
-      moves: allPaths.map(path => ({
-        x: path.endX,
-        y: path.endY,
-        z: path.type === 'draw' ? 1 : 0,
-        type: path.type
-      })),
-      boundingBox: {
-        minX: Math.min(...allPaths.map(p => Math.min(p.startX, p.endX))),
-        maxX: Math.max(...allPaths.map(p => Math.max(p.startX, p.endX))),
-        minY: Math.min(...allPaths.map(p => Math.min(p.startY, p.endY))),
-        maxY: Math.max(...allPaths.map(p => Math.max(p.startY, p.endY)))
-      }
-    };
-
-    plotterSequenceRef.current = [...allPaths];
-    setGridState(prev => ({ ...prev, isPlotting: true, isPreviewMode: true }));
-    
-    // Start preview animation
-    startPlotting();
-    
-    // Send to plotter after preview
-    const plotTimeout = setTimeout(() => {
-      if (!isCleaningUp.current) {
-        onPlot(plotterSequence);
-        setGridState(prev => ({ ...prev, isPreviewMode: false }));
-      }
-    }, 10000);
-
+  
+    try {
+      // Create plotter sequence from drawn paths
+      const plotterSequence: PlotterSequence = {
+        name: 'Manual Drawing',
+        moves: allPaths.map((path, index) => ({
+          type: path.type,
+          x: path.endX,
+          y: path.endY,
+          // Add pen up/down movements between disconnected paths
+          z: index === 0 ? -45 : 
+             (path.startX !== allPaths[index-1]?.endX || 
+              path.startY !== allPaths[index-1]?.endY) ? 0 : -45
+        })),
+        boundingBox: {
+          minX: Math.min(...allPaths.map(p => Math.min(p.startX, p.endX))),
+          maxX: Math.max(...allPaths.map(p => Math.max(p.startX, p.endX))),
+          minY: Math.min(...allPaths.map(p => Math.min(p.startY, p.endY))),
+          maxY: Math.max(...allPaths.map(p => Math.max(p.startY, p.endY)))
+        }
+      };
+  
+      // Store for preview
+      plotterSequenceRef.current = [...allPaths];
+      
+      // Start preview animation
+      setGridState(prev => ({ 
+        ...prev, 
+        isPlotting: true, 
+        isPreviewMode: true 
+      }));
+  
+      // Show preview for 3 seconds then execute
+      setTimeout(() => {
+        if (!isCleaningUp.current) {
+          setGridState(prev => ({ ...prev, isPreviewMode: false }));
+          onPlot(plotterSequence); // This calls handleLoadSequence
+        }
+      }, 3000);
+  
+    } catch (error) {
+      console.error('Failed to create plot sequence:', error);
+      //addNotification(`Failed to create plot sequence: ${error}`, 'error');
+    }
+  
     return () => {
-      clearTimeout(plotTimeout);
       resetState();
     };
-  }, [allPaths, isCleaningUp, startPlotting, onPlot, resetState]);
+  }, [allPaths, isCleaningUp, onPlot, resetState]);
 
   return (
     <div className="border rounded-lg p-4">
