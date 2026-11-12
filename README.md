@@ -127,3 +127,9 @@ npm run lint
 - LEGO PoweredUP SDK
 - Next.js team
 - React community
+
+## Trademarks and affiliation
+
+This project is independent. It is not affiliated with, endorsed by or sponsored by the LEGO Group, the Scratch Foundation/MIT, or the TurboWarp project.
+
+LEGO®, MINDSTORMS®, SPIKE™, Boost, Powered Up, WeDo, NXT and EV3 are trademarks of the LEGO Group, which does not sponsor, authorize or endorse this project. Scratch is a trademark of the Scratch Foundation/MIT; TurboWarp is an independent open-source project. Other hardware and software names are trademarks of their respective owners. All names are used only to identify compatible hardware, software and file formats; all trademarks remain the property of their respective owners.
